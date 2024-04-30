@@ -4,18 +4,22 @@
   <name>nav2_wfd</name>
   <version>0.0.1</version>
   <description>Wavefront Frontier Detector for ROS2 Navigation2</description>
-  <maintainer email="">Sean Regan</maintainer>
+  <maintainer email="1@gmail.com">Sean Regan</maintainer>
   <license>MIT License</license>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
+
+  <depend>turtlebot4_navigation</depend>
   
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>turtlebot4_navigation</exec_depend>
+
   <!-- <exec_depend>numpy</exec_depend> -->
 
   <export>

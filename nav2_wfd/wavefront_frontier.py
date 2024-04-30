@@ -18,12 +18,14 @@ import time
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator, BasicNavigator
 from nav2_msgs.action import FollowWaypoints
 from nav2_msgs.srv import ManageLifecycleNodes
 from nav2_msgs.srv import GetCostmap
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg  import OccupancyGrid
 from nav_msgs.msg import Odometry
+# from nav2_simple_commander.simple_commander import BasicNavigator
 
 import rclpy
 from rclpy.action import ActionClient
@@ -250,23 +252,23 @@ class PointClassification(Enum):
     FrontierOpen = 4
     FrontierClosed = 8
 
-class WaypointFollowerTest(Node):
+class WaypointFollowerTest(BasicNavigator):
 
     def __init__(self):
-        super().__init__(node_name='nav2_waypoint_tester', namespace='')
+        super().__init__()
         self.waypoints = None
         self.readyToMove = True
         self.currentPose = None
         self.lastWaypoint = None
-        self.action_client = ActionClient(self, FollowWaypoints, 'FollowWaypoints')
-        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
-                                                      'initialpose', 10)
+        # self.action_client = ActionClient(self, FollowWaypoints, 'FollowWaypoints')
+        # self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
+        #                                               'initialpose', 10)
 
-        self.costmapClient = self.create_client(GetCostmap, '/global_costmap/get_costmap')
-        while not self.costmapClient.wait_for_service(timeout_sec=1.0):
-            self.info_msg('service not available, waiting again...')
-        self.initial_pose_received = False
-        self.goal_handle = None
+        # self.costmapClient = self.create_client(GetCostmap, '/global_costmap/get_costmap')
+        # while not self.costmapClient.wait_for_service(timeout_sec=1.0):
+        #     self.info_msg('service not available, waiting again...')
+        # self.initial_pose_received = False
+        # self.goal_handle = None
 
         pose_qos = QoSProfile(
           durability=QoSDurabilityPolicy.RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL,
@@ -284,9 +286,11 @@ class WaypointFollowerTest(Node):
         self.get_logger().info('Running Waypoint Test')
 
     def occupancyGridCallback(self, msg):
+        self.info_msg('Received Occupancy Grid')
         self.costmap = OccupancyGrid2d(msg)
 
     def moveToFrontiers(self):
+        self.info_msg('Current Pose, x: {0}, y: {1}'.format(self.currentPose.position.x, self.currentPose.position.y))
         frontiers = getFrontier(self.currentPose, self.costmap, self.get_logger())
 
         if len(frontiers) == 0:
@@ -305,34 +309,31 @@ class WaypointFollowerTest(Node):
         self.info_msg(f'World points {location}')
         self.setWaypoints(location)
 
-        action_request = FollowWaypoints.Goal()
-        action_request.poses = self.waypoints
+        i = 0
+        self.followWaypoints(self.waypoints)
 
-        self.info_msg('Sending goal request...')
-        send_goal_future = self.action_client.send_goal_async(action_request)
-        try:
-            rclpy.spin_until_future_complete(self, send_goal_future)
-            self.goal_handle = send_goal_future.result()
-        except Exception as e:
-            self.error_msg('Service call failed %r' % (e,))
+        while not self.isTaskComplete():
+            i = i + 1
+            feedback = self.getFeedback()
+            if feedback and i % 5 == 0:
+                print('Executing current waypoint: {0}/{1: <5}'.format(
+                    str(feedback.current_waypoint + 1), str(len(self.waypoints))), end='\r')
 
-        if not self.goal_handle.accepted:
-            self.error_msg('Goal rejected')
-            return
 
-        self.info_msg('Goal accepted')
+       
+        # self.info_msg('Goal accepted')
 
-        get_result_future = self.goal_handle.get_result_async()
+        # get_result_future = self.goal_handle.get_result_async()
 
-        self.info_msg("Waiting for 'FollowWaypoints' action to complete")
-        try:
-            rclpy.spin_until_future_complete(self, get_result_future)
-            status = get_result_future.result().status
-            result = get_result_future.result().result
-        except Exception as e:
-            self.error_msg('Service call failed %r' % (e,))
+        # self.info_msg("Waiting for 'FollowWaypoints' action to complete")
+        # try:
+        #     rclpy.spin_until_future_complete(self, get_result_future)
+        #     status = get_result_future.result().status
+        #     result = get_result_future.result().result
+        # except Exception as e:
+        #     self.error_msg('Service call failed %r' % (e,))
 
-        #self.currentPose = self.waypoints[len(self.waypoints) - 1].pose
+        # self.currentPose = self.waypoints[len(self.waypoints) - 1].pose
 
         self.moveToFrontiers()
 
@@ -353,30 +354,36 @@ class WaypointFollowerTest(Node):
         costmap = self.costmapClient.call(costmapReq)
         self.get_logger().info(f'costmap resolution {costmap.specs.resolution}')
 
-    def setInitialPose(self, pose):
-        self.init_pose = PoseWithCovarianceStamped()
-        self.init_pose.pose.pose.position.x = pose[0]
-        self.init_pose.pose.pose.position.y = pose[1]
-        self.init_pose.header.frame_id = 'map'
-        self.currentPose = self.init_pose.pose.pose
-        self.publishInitialPose()
-        time.sleep(5)
+    def setInitialPoseWFD(self, pose):
+        self.currentPose = self.getPoseStamped(pose)
+        initial_pose = self.getPoseStamped(pose)
+        self.setInitialPose(initial_pose)
+
 
     def poseCallback(self, msg):
         self.info_msg('Received amcl_pose')
         self.currentPose = msg.pose.pose
         self.initial_pose_received = True
+
+    
+    def getPoseStamped(self, pose):
+        p = PoseStamped()
+        p.pose.position.x = pose[0]
+        p.pose.position.y = pose[1]
+        p.pose.orientation.x = 0.0
+        p.pose.orientation.y = 0.0
+        p.pose.orientation.z = 0.0
+        p.pose.orientation.w = 1.0
+        p.header.frame_id = 'map'
+        p.header.stamp = self.get_clock().now().to_msg()
+        return p
         
 
     def setWaypoints(self, waypoints):
         self.waypoints = []
         for wp in waypoints:
-            msg = PoseStamped()
-            msg.header.frame_id = 'map'
-            msg.pose.position.x = wp[0]
-            msg.pose.position.y = wp[1]
-            msg.pose.orientation.w = 1.0
-            self.waypoints.append(msg)
+            self.waypoints.append(self.getPoseStamped(wp))
+        
 
     def run(self, block):
         if not self.waypoints:
@@ -481,35 +488,34 @@ class WaypointFollowerTest(Node):
         self.get_logger().error(msg)
 
 
-def main(argv=sys.argv[1:]):
-    rclpy.init()
-
+def main(argv=sys.argv[1:]):    
     # wait a few seconds to make sure entire stacks are up
     #time.sleep(10)
-
-    wps = [[-0.52, -0.54], [0.58, -0.55], [0.58, 0.52]]
-    starting_pose = [-2.0, -0.5]
+    rclpy.init()
 
     test = WaypointFollowerTest()
+
+    wps = [[-0.52, -0.54], [0.58, -0.55], [0.58, 0.52]]
+    starting_pose = [0., 0.]
+
+    test.info_msg('Setting initial pose')
+    test.setInitialPoseWFD(starting_pose)
+    test.info_msg('Waiting for amcl_pose to be received')
+    
     #test.dumpCostmap()
     test.setWaypoints(wps)
 
-    retry_count = 0
-    retries = 2
-    while not test.initial_pose_received and retry_count <= retries:
-        retry_count += 1
-        test.info_msg('Setting initial pose')
-        test.setInitialPose(starting_pose)
-        test.info_msg('Waiting for amcl_pose to be received')
-        rclpy.spin_once(test, timeout_sec=1.0)  # wait for poseCallback
+
 
     while test.costmap == None:
         test.info_msg('Getting initial map')
-        rclpy.spin_once(test, timeout_sec=1.0)
+        rclpy.spin_once(test)
 
     test.moveToFrontiers()
 
     rclpy.spin(test)
+
+
     # result = test.run(True)
     # assert result
 
@@ -541,6 +547,7 @@ def main(argv=sys.argv[1:]):
     #     test.info_msg('Exiting passed')
     #     exit(0)
 
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
